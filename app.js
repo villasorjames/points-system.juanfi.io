@@ -1,4 +1,5 @@
 import { initializeApp } from "https://www.gstatic.com/firebasejs/12.12.1/firebase-app.js";
+import { getAuth, signInWithEmailAndPassword, signOut, onAuthStateChanged } from "https://www.gstatic.com/firebasejs/12.12.1/firebase-auth.js";
 import { getDatabase, ref, get, set } from "https://www.gstatic.com/firebasejs/12.12.1/firebase-database.js";
 
 const firebaseConfig = {
@@ -16,6 +17,7 @@ const CONFIG_PATH = "points/config";
 const DEFAULT_AMOUNTS = [1, 5, 10, 20];
 
 const app = initializeApp(firebaseConfig);
+const auth = getAuth(app);
 const db = getDatabase(app);
 const configRef = ref(db, CONFIG_PATH);
 
@@ -25,7 +27,17 @@ const el = {
   ratesBody: document.getElementById("ratesBody"),
   saveBtn: document.getElementById("saveBtn"),
   status: document.getElementById("statusText"),
+  authEmail: document.getElementById("authEmail"),
+  authPassword: document.getElementById("authPassword"),
+  loginBtn: document.getElementById("loginBtn"),
+  logoutBtn: document.getElementById("logoutBtn"),
+  authUserLine: document.getElementById("authUserLine"),
 };
+
+function updateSaveButtonState() {
+  const loggedIn = Boolean(auth.currentUser);
+  el.saveBtn.disabled = !loggedIn;
+}
 
 function formatPoints(n) {
   const v = Number(n);
@@ -93,7 +105,37 @@ el.percentage.addEventListener("input", () => {
   renderTable(DEFAULT_AMOUNTS, pct);
 });
 
+el.loginBtn.addEventListener("click", async () => {
+  const email = el.authEmail.value.trim();
+  const password = el.authPassword.value;
+  if (!email || !password) {
+    setStatus("Enter email and password.", "error");
+    return;
+  }
+  el.loginBtn.disabled = true;
+  setStatus("Signing in…", null);
+  try {
+    await signInWithEmailAndPassword(auth, email, password);
+    el.authPassword.value = "";
+    setStatus("Signed in. You can save changes.", "ok");
+  } catch (e) {
+    console.error(e);
+    setStatus(e?.message || "Sign-in failed.", "error");
+  } finally {
+    el.loginBtn.disabled = false;
+  }
+});
+
+el.logoutBtn.addEventListener("click", async () => {
+  await signOut(auth);
+  setStatus("Signed out. Save is disabled until you sign in again.", null);
+});
+
 el.saveBtn.addEventListener("click", async () => {
+  if (!auth.currentUser) {
+    setStatus("Sign in first to save.", "error");
+    return;
+  }
   el.saveBtn.disabled = true;
   setStatus("Saving…", null);
   try {
@@ -104,26 +146,45 @@ el.saveBtn.addEventListener("click", async () => {
     console.error(e);
     setStatus(e?.message || "Save failed. Check console & database rules.", "error");
   } finally {
-    el.saveBtn.disabled = false;
+    updateSaveButtonState();
   }
 });
 
-async function bootstrap() {
+async function loadConfig() {
   setStatus("Loading…", null);
   try {
     const snap = await get(configRef);
     if (snap.exists()) {
       applyState(snap.val());
-      setStatus("Loaded from Firebase.", "ok");
+      setStatus(auth.currentUser ? "Loaded from Firebase." : "Loaded — sign in to save.", "ok");
     } else {
       applyState({ enabled: false, percentage: 0, amounts: DEFAULT_AMOUNTS });
-      setStatus("No config yet — adjust and save.", null);
+      setStatus(auth.currentUser ? "No config yet — adjust and save." : "No config yet — sign in to save.", null);
     }
   } catch (e) {
     console.error(e);
     applyState({ enabled: false, percentage: 0, amounts: DEFAULT_AMOUNTS });
     setStatus(e?.message || "Could not read Firebase. Check rules & URL.", "error");
   }
+}
+
+onAuthStateChanged(auth, (user) => {
+  if (user) {
+    el.authUserLine.hidden = false;
+    el.authUserLine.textContent = `Signed in as ${user.email || user.uid}`;
+    el.logoutBtn.hidden = false;
+    el.loginBtn.hidden = true;
+  } else {
+    el.authUserLine.hidden = true;
+    el.logoutBtn.hidden = true;
+    el.loginBtn.hidden = false;
+  }
+  updateSaveButtonState();
+});
+
+async function bootstrap() {
+  await loadConfig();
+  updateSaveButtonState();
 }
 
 bootstrap();
